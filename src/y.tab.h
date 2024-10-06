@@ -35,8 +35,8 @@
    especially those whose name start with YY_ or yy_.  They are
    private implementation details that can be changed or removed.  */
 
-#ifndef YY_YY_Y_TAB_HPP_INCLUDED
-# define YY_YY_Y_TAB_HPP_INCLUDED
+#ifndef YY_YY_Y_TAB_H_INCLUDED
+# define YY_YY_Y_TAB_H_INCLUDED
 /* Debug traces.  */
 #ifndef YYDEBUG
 # define YYDEBUG 1
@@ -88,10 +88,10 @@ extern int yydebug;
     LE = 289,                      /* LE  */
     EQ = 290,                      /* EQ  */
     NE = 291,                      /* NE  */
-    NEG = 292,                     /* NEG  */
-    NUM = 293,                     /* NUM  */
-    ID = 294,                      /* ID  */
-    TYPE = 295                     /* TYPE  */
+    NUM = 292,                     /* NUM  */
+    ID = 293,                      /* ID  */
+    TYPE = 294,                    /* TYPE  */
+    UMINUS = 295                   /* UMINUS  */
   };
   typedef enum yytokentype yytoken_kind_t;
 #endif
@@ -134,10 +134,10 @@ extern int yydebug;
 #define LE 289
 #define EQ 290
 #define NE 291
-#define NEG 292
-#define NUM 293
-#define ID 294
-#define TYPE 295
+#define NUM 292
+#define ID 293
+#define TYPE 294
+#define UMINUS 295
 
 /* Value type.  */
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
@@ -176,11 +176,11 @@ union YYSTYPE
     A_returnStmt returnStmt;
     A_boolExpr boolExpr;
     A_boolUnit boolUnit;
-    //A_boolBiOp boolBiOp;
+    A_boolBiOp boolBiOp;
     A_boolUOp boolUOp;
     A_comOp comOp;
 
-#line 184 "y.tab.hpp"
+#line 184 "y.tab.h"
 
 };
 typedef union YYSTYPE YYSTYPE;
@@ -195,4 +195,4 @@ extern YYSTYPE yylval;
 int yyparse (void);
 
 
-#endif /* !YY_YY_Y_TAB_HPP_INCLUDED  */
+#endif /* !YY_YY_Y_TAB_H_INCLUDED  */

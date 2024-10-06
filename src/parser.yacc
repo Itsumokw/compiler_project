@@ -6,6 +6,7 @@
 
 extern A_pos pos;
 extern A_program root;
+extern int yydebug;
 
 extern int yylex(void);
 extern "C"{
@@ -30,6 +31,7 @@ extern "C"{
     A_fnDeclStmt fnDeclStmt;
     A_fnDef fnDef;
     A_fnCall fnCall;
+    A_fnDecl fnDecl;
     A_leftVal leftVal;
     A_varDecl varDecl;
     A_varDeclList varDeclList;
@@ -46,7 +48,7 @@ extern "C"{
     A_returnStmt returnStmt;
     A_boolExpr boolExpr;
     A_boolUnit boolUnit;
-    A_boolBiOp boolBiOp;
+    //A_boolBiOp boolBiOp;
     A_boolUOp boolUOp;
     A_comOp comOp;
 }
@@ -90,11 +92,14 @@ extern "C"{
 %token <pos> EQ         // "=="
 %token <pos> NE         // "!="
 
+%token <pos> NEG     // "-"
+
 %token <tokenNum> NUM
 %token <tokenId> ID
 %token <type> TYPE
 
 // 定义非终结符（Non-terminals）及其类型
+%type <type> Type
 %type <program> Program
 %type <arithExpr> ArithExpr
 %type <programElementList> ProgramElementList
@@ -123,7 +128,7 @@ extern "C"{
 %type <returnStmt> ReturnStmt
 %type <boolExpr> BoolExpr
 %type <boolUnit> BoolUnit
-%type <boolBiOp> BoolBiOp
+//%type <boolBiOp> BoolBiOp
 %type <boolUOp> BoolUOp
 %type <comOp> ComOp
 
@@ -134,8 +139,8 @@ extern "C"{
 %left GT LT GE LE
 %left ADD SUB
 %left MUL DIV
+%right NEG
 %right NOT
-%right UMINUS
 
 %start Program
 
@@ -156,7 +161,7 @@ ProgramElementList:
     }
     |
     {
-      $$ = NULL;
+      $$ = nullptr;
     }
     ;
 
@@ -182,6 +187,20 @@ ProgramElement:
       $$ = A_ProgramNullStmt($1);
     }
     ;
+
+Type:
+      TYPE
+        {
+            // 对于内置类型，直接使用 yylval.type
+            $$ = A_NativeType($1->pos, A_intTypeKind);;
+        }
+    | ID
+        {
+            // 对于用户自定义类型，创建结构体类型
+            $$ = A_StructType($1->pos, $1->id);
+        }
+    ;
+
 
 ArithExpr:
       ArithExpr ADD ArithExpr
@@ -211,6 +230,7 @@ ArithExpr:
     ;
 
 ExprUnit:
+
       NUM
     {
       $$ = A_NumExprUnit($1->pos, $1->num);
@@ -231,112 +251,122 @@ ExprUnit:
     {
       A_indexExpr idx = A_IdIndexExpr($3->pos, $3->id);
       A_arrayExpr arrayExpr = A_ArrayExpr($2, $1, idx);
-      $$ = A_ArrayExprUnit($2, arrayExpr);
+      $$ = A_ArrayExprUnit($1->pos, arrayExpr);
     }
     | LeftVal LBRACKET NUM RBRACKET
     {
       A_indexExpr idx = A_NumIndexExpr($3->pos, $3->num);
       A_arrayExpr arrayExpr = A_ArrayExpr($2, $1, idx);
-      $$ = A_ArrayExprUnit($2, arrayExpr);
+      $$ = A_ArrayExprUnit($1->pos, arrayExpr);
     }
     | LeftVal DOT ID
     {
       A_memberExpr memberExpr = A_MemberExpr($2, $1, $3->id);
-      $$ = A_MemberExprUnit($2, memberExpr);
+      $$ = A_MemberExprUnit($1->pos, memberExpr);
+    }
+    | SUB ExprUnit %prec NEG
+    {
+        // 优化：如果 ExprUnit 是数字，则直接创建负数节点
+        if ($2->kind == A_numExprKind) {
+            $$ = A_NumExprUnit($2->pos, -($2->u.num));
+        } else {
+            A_arithUExpr arithUExpr = A_ArithUExpr($1, A_neg, $2);
+            $$ = A_ArithUExprUnit($1, arithUExpr);
+        }
     }
     ;
 
 StructDef:
       STRUCT ID LBRACE VarDeclList RBRACE
     {
-      $$ = A_StructDef($1->pos, $2->id, $4);
+      $$ = A_StructDef($1, $2->id, $4);
     }
     ;
 
 VarDeclStmt:
       LET VarDecl SEMICOLON
     {
-      $$ = A_VarDeclStmt($1->pos, $2);
+      $$ = A_VarDeclStmt($1, $2);
     }
     | LET VarDef SEMICOLON
     {
-      $$ = A_VarDefStmt($1->pos, $2);
+      $$ = A_VarDefStmt($1, $2);
     }
     ;
 
 VarDecl:
-      ID COLON TYPE
-    {
-      A_varDeclScalar declScalar = A_VarDeclScalar($1->pos, $1->id, $3);
-      $$ = A_VarDecl_Scalar($1->pos, declScalar);
-    }
-    | ID LBRACKET NUM RBRACKET COLON TYPE
+     ID LBRACKET NUM RBRACKET COLON Type
     {
       A_varDeclArray declArray = A_VarDeclArray($1->pos, $1->id, $3->num, $6);
       $$ = A_VarDecl_Array($1->pos, declArray);
     }
-    | ID
+    | ID COLON Type
     {
-      A_varDeclScalar declScalar = A_VarDeclScalar($1->pos, $1->id, NULL);
+      A_varDeclScalar declScalar = A_VarDeclScalar($1->pos, $1->id, $3);
       $$ = A_VarDecl_Scalar($1->pos, declScalar);
     }
     | ID LBRACKET NUM RBRACKET
     {
-      A_varDeclArray declArray = A_VarDeclArray($1->pos, $1->id, $3->num, NULL);
+      A_varDeclArray declArray = A_VarDeclArray($1->pos, $1->id, $3->num, nullptr);
       $$ = A_VarDecl_Array($1->pos, declArray);
+    }
+    | ID
+    {
+      A_varDeclScalar declScalar = A_VarDeclScalar($1->pos, $1->id, nullptr);
+      $$ = A_VarDecl_Scalar($1->pos, declScalar);
     }
     ;
 
 VarDeclList:
       VarDecl
     {
-      $$ = A_VarDeclList($1, NULL);
+      $$ = A_VarDeclList($1, nullptr);
     }
-    | VarDeclList COMMA VarDecl
+    | VarDecl COMMA VarDeclList
     {
-      $$ = A_VarDeclList($3, $1);
+      $$ = A_VarDeclList($1, $3);
     }
     |
     {
-      $$ = NULL;
+      $$ = nullptr;
     }
     ;
 
 VarDef:
-      ID COLON TYPE ASSIGN RightVal
-    {
-      A_varDefScalar defScalar = A_VarDefScalar($1->pos, $1->id, $3, $5);
-      $$ = A_VarDef_Scalar($1->pos, defScalar);
-    }
-    | ID ASSIGN RightVal
-    {
-      A_varDefScalar defScalar = A_VarDefScalar($1->pos, $1->id, NULL, $3);
-      $$ = A_VarDef_Scalar($1->pos, defScalar);
-    }
-    | ID LBRACKET NUM RBRACKET COLON TYPE ASSIGN LBRACE RightValList RBRACE
+      ID LBRACKET NUM RBRACKET COLON Type ASSIGN LBRACE RightValList RBRACE
     {
       A_varDefArray defArray = A_VarDefArray($1->pos, $1->id, $3->num, $6, $9);
       $$ = A_VarDef_Array($1->pos, defArray);
     }
     | ID LBRACKET NUM RBRACKET ASSIGN LBRACE RightValList RBRACE
     {
-      A_varDefArray defArray = A_VarDefArray($1->pos, $1->id, $3->num, NULL, $7);
+      A_varDefArray defArray = A_VarDefArray($1->pos, $1->id, $3->num, nullptr, $7);
       $$ = A_VarDef_Array($1->pos, defArray);
+    }
+    | ID COLON Type ASSIGN RightVal
+    {
+      A_varDefScalar defScalar = A_VarDefScalar($1->pos, $1->id, $3, $5);
+      $$ = A_VarDef_Scalar($1->pos, defScalar);
+    }
+    | ID ASSIGN RightVal
+    {
+      A_varDefScalar defScalar = A_VarDefScalar($1->pos, $1->id, nullptr, $3);
+      $$ = A_VarDef_Scalar($1->pos, defScalar);
     }
     ;
 
 RightValList:
       RightVal
     {
-      $$ = A_RightValList($1, NULL);
+      $$ = A_RightValList($1, nullptr);
     }
-    | RightValList COMMA RightVal
+    | RightVal COMMA RightValList
     {
-      $$ = A_RightValList($3, $1);
+      $$ = A_RightValList($1, $3);
     }
     |
     {
-      $$ = NULL;
+      $$ = nullptr;
     }
     ;
 
@@ -356,18 +386,18 @@ LeftVal:
     {
       A_indexExpr idx = A_IdIndexExpr($3->pos, $3->id);
       A_arrayExpr arrExpr = A_ArrayExpr($2, $1, idx);
-      $$ = A_ArrExprLVal($2, arrExpr);
+      $$ = A_ArrExprLVal($1->pos, arrExpr);
     }
     | LeftVal LBRACKET NUM RBRACKET
     {
       A_indexExpr idx = A_NumIndexExpr($3->pos, $3->num);
       A_arrayExpr arrExpr = A_ArrayExpr($2, $1, idx);
-      $$ = A_ArrExprLVal($2, arrExpr);
+      $$ = A_ArrExprLVal($1->pos, arrExpr);
     }
     | LeftVal DOT ID
     {
       A_memberExpr memberExpr = A_MemberExpr($2, $1, $3->id);
-      $$ = A_MemberExprLVal($2, memberExpr);
+      $$ = A_MemberExprLVal($1->pos, memberExpr);
     }
     ;
 
@@ -379,13 +409,13 @@ FnDeclStmt:
     ;
 
 FnDecl:
-      FN ID LPAREN ParamDecl RPAREN
+      FN ID LPAREN ParamDecl RPAREN ARROW Type
     {
-      $$ = A_FnDecl($1->pos, $2->id, $4, NULL);
+      $$ = A_FnDecl($1, $2->id, $4, $7);
     }
-    | FN ID LPAREN ParamDecl RPAREN ARROW TYPE
+    | FN ID LPAREN ParamDecl RPAREN
     {
-      $$ = A_FnDecl($1->pos, $2->id, $4, $7);
+      $$ = A_FnDecl($1, $2->id, $4, nullptr);
     }
     ;
 
@@ -403,6 +433,9 @@ FnDef:
     }
     ;
 
+
+//这里或许应该合并成为CodeBlockStmtList，因为与TeaplAst中的定义有点偏差
+//但是可以先留下来，如果没问题就算辽，不过这里提供了"()"
 CodeBlock:
       LBRACE StmtList RBRACE
     {
@@ -414,9 +447,9 @@ StmtList:
     {
       $$ = nullptr;
     }
-    | StmtList Stmt
+    | Stmt StmtList
     {
-      $$ = A_CodeBlockStmtList($2, $1);
+      $$ = A_CodeBlockStmtList($1, $2);
     }
     ;
 
@@ -447,11 +480,11 @@ Stmt:
     }
     | CONTINUE SEMICOLON
     {
-      $$ = A_BlockContinueStmt($1->pos);
+      $$ = A_BlockContinueStmt($1);
     }
     | BREAK SEMICOLON
     {
-      $$ = A_BlockBreakStmt($1->pos);
+      $$ = A_BlockBreakStmt($1);
     }
     | SEMICOLON
     {
@@ -462,7 +495,7 @@ Stmt:
 AssignStmt:
       LeftVal ASSIGN RightVal SEMICOLON
     {
-      $$ = A_AssignStmt($2->pos, $1, $3);
+      $$ = A_AssignStmt($2, $1, $3);
     }
     ;
 
@@ -481,10 +514,15 @@ FnCall:
     ;
 
 BoolExpr:
-      BoolExpr BoolBiOp BoolExpr
+      BoolExpr AND BoolExpr
     {
-      A_boolBiOpExpr boolBiOpExpr = A_BoolBiOpExpr($2, $2, $1, $3);
-      $$ = A_BoolBiOp_Expr($2, boolBiOpExpr);
+      A_boolBiOpExpr boolBiOpExpr = A_BoolBiOpExpr($1->pos, A_and, $1, $3);
+      $$ = A_BoolBiOp_Expr($1->pos, boolBiOpExpr);
+    }
+    | BoolExpr OR BoolExpr
+    {
+      A_boolBiOpExpr boolBiOpExpr = A_BoolBiOpExpr($1->pos, A_or, $1, $3);
+      $$ = A_BoolBiOp_Expr($1->pos, boolBiOpExpr);
     }
     | BoolUnit
     {
@@ -495,31 +533,31 @@ BoolExpr:
 BoolUnit:
       LPAREN ExprUnit ComOp ExprUnit RPAREN
     {
-      A_comExpr comExpr = A_ComExpr($3, $3, $2, $4);
-      $$ = A_ComExprUnit($3, comExpr);
+      A_comExpr comExpr = A_ComExpr($2->pos, $3, $2, $4);
+      $$ = A_ComExprUnit($2->pos, comExpr);
     }
     | LPAREN BoolExpr RPAREN
     {
-      $$ = A_BoolExprUnit($1->pos, $2);
+      $$ = A_BoolExprUnit($1, $2);
     }
-    | BoolUOp BoolUnit
+    | LPAREN BoolUOp BoolUnit RPAREN
     {
-      A_boolUOpExpr boolUOpExpr = A_BoolUOpExpr($1, $1, $2);
-      $$ = A_BoolUOpExprUnit($1, boolUOpExpr);
+      A_boolUOpExpr boolUOpExpr = A_BoolUOpExpr($3->pos, $2, $3);
+      $$ = A_BoolUOpExprUnit($3->pos, boolUOpExpr);
     }
     ;
-
+/*
 BoolBiOp:
-      AND
+      OR
     {
       $$ = A_and;
     }
-    | OR
+    | AND
     {
       $$ = A_or;
     }
     ;
-
+*/
 BoolUOp:
       NOT
     {
@@ -555,41 +593,42 @@ ComOp:
     ;
 
 IfStmt:
-      IF BoolExpr CodeBlock
+      IF BoolUnit CodeBlock
     {
-      $$ = A_IfStmt($1->pos, $2, $3, NULL);
+      $$ = A_IfStmt($1, $2, $3, nullptr);
     }
-    | IF BoolExpr CodeBlock ELSE CodeBlock
+    | IF BoolUnit CodeBlock ELSE CodeBlock
     {
-      $$ = A_IfStmt($1->pos, $2, $3, $5);
+      $$ = A_IfStmt($1, $2, $3, $5);
     }
     ;
 
 WhileStmt:
-      WHILE BoolExpr CodeBlock
+      WHILE BoolUnit CodeBlock
     {
-      $$ = A_WhileStmt($1->pos, $2, $3); 
+      $$ = A_WhileStmt($1, $2, $3); 
     }
     ;
 
 ReturnStmt:
       RET RightVal SEMICOLON
     {
-      $$ = A_ReturnStmt($1->pos, $2);
+      $$ = A_ReturnStmt($1, $2);
     }
     | RET SEMICOLON
     {
-      $$ = A_ReturnStmt($1->pos, NULL);
+      $$ = A_ReturnStmt($1, nullptr);
     }
     ;
 
 %%
     
 extern "C"{
-void yyerror(const char * s)
-{
-  fprintf(stderr, "%s\n",s);
+void yyerror(const char *s) {
+    extern int line, col;
+    fprintf(stderr, "Syntax error at line %d, column %d: %s\n", line, col, s);
 }
+
 int yywrap()
 {
   return(1);
